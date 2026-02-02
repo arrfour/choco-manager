@@ -37,6 +37,10 @@ For the easiest experience, run the manager script:
 ```
 This interactive tool allows you to check status, export lists, and install packages from a simple menu.
 
+Notes:
+- If Chocolatey is missing, the main menu will show an "Install Chocolatey" option.
+- The footer shows the installed Chocolatey version and, when different, the latest available version.
+
 ## Project Layout
 
 - `choco-manager.ps1`: primary entrypoint (wrapper)
