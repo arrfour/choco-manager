@@ -1,0 +1,19 @@
+# PowerShell / OS noise
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+
+# Visual Studio Code
+.vscode/
+
+# PowerShell Output
+# PowerShell Output
+choco_packages.txt
+
+# Logs
+*.log
+
+# Local artifacts
+recent_critical_events*.txt
+test_export.txt

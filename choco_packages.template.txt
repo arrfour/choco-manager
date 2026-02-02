@@ -1,0 +1,9 @@
+# Example Chocolatey Package List
+# Add package names one per line.
+# Lines starting with # are ignored.
+
+7zip
+git
+vscode
+googlechrome
+notepadplusplus
