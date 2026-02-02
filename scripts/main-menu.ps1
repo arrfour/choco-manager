@@ -169,7 +169,7 @@ do {
         "Winget Tools" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Winget\winget-utils.ps1") -Action Interactive }
         "View Audit Log" { Show-AuditLog; Pause }
         "Elevate to Admin" {
-            Invoke-ElevatedAction -FilePath $MyInvocation.MyCommand.Path
+            Invoke-ElevatedAction -FilePath (Join-Path $PSScriptRoot "choco-manager.ps1")
             return
         }
         "Quit" { return }

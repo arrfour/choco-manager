@@ -12,10 +12,15 @@ Desktop.ini
 choco_packages.txt
 choco-manager.log
 data/choco_packages.txt
+data/*.user
 
 # Logs
 *.log
 logs/
+
+# OS/user data
+*.local
+*.secret
 
 # Local artifacts
 recent_critical_events*.txt
