@@ -10,9 +10,12 @@ Desktop.ini
 # PowerShell Output
 # PowerShell Output
 choco_packages.txt
+choco-manager.log
+data/choco_packages.txt
 
 # Logs
 *.log
+logs/
 
 # Local artifacts
 recent_critical_events*.txt

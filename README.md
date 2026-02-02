@@ -37,6 +37,21 @@ For the easiest experience, run the manager script:
 ```
 This interactive tool allows you to check status, export lists, and install packages from a simple menu.
 
+## Project Layout
+
+- `choco-manager.ps1`: primary entrypoint (wrapper)
+- `scripts/`: entry scripts
+- `src/Core/`: shared functions and UI helpers
+- `src/Choco/`: Chocolatey workflows
+- `src/Winget/`: Winget workflows
+- `data/`: templates and sample data
+- `logs/`: runtime logs
+
+## Data Files
+
+- `data/choco_packages.txt`: default package list (user-specific, git-ignored)
+- `data/choco_packages.template.txt`: template list
+
 ---
 
 ### Manual Usage
