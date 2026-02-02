@@ -71,6 +71,48 @@ function Show-AuditLog {
     }
 }
 
+function Get-ChocoVersionInfo {
+    $info = [PSCustomObject]@{
+        IsInstalled = $false
+        InstalledVersion = $null
+        LatestVersion = $null
+    }
+
+    $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
+    if (-not $chocoCmd) { return $info }
+
+    $info.IsInstalled = $true
+    try { $info.InstalledVersion = (choco --version 2>$null).Trim() } catch { }
+    try {
+        $raw = choco list chocolatey --exact -r 2>$null
+        foreach ($line in $raw) {
+            if ($line -match '\|') {
+                $parts = $line -split '\|'
+                if ($parts[0] -eq 'chocolatey') {
+                    $info.LatestVersion = $parts[1]
+                    break
+                }
+            }
+        }
+    } catch { }
+
+    return $info
+}
+
+function Install-Chocolatey {
+    Write-Host "This will install Chocolatey from community.chocolatey.org." -ForegroundColor Yellow
+    $confirm = Read-Host "Proceed? (y/n)"
+    if ($confirm -ne 'y') { return }
+
+    $command = "& {" +
+        " Set-ExecutionPolicy Bypass -Scope Process -Force;" +
+        " [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072;" +
+        " iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))" +
+        " }"
+
+    Invoke-ElevatedProcess -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $command)
+}
+
 function Test-IsAdmin {
     $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
     return $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)

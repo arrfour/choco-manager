@@ -17,10 +17,20 @@ function Show-Header {
 }
 
 function Show-Footer {
-    $chocoVer = choco --version 2>$null
+    $chocoInfo = Get-ChocoVersionInfo
+    $chocoVer = if ($chocoInfo.IsInstalled) { $chocoInfo.InstalledVersion } else { $null }
+    $chocoLatest = $chocoInfo.LatestVersion
     $wingetVer = winget --version 2>$null
     Write-Host "----------------------------" -ForegroundColor Gray
-    if ($chocoVer) { Write-Host "Choco: v$chocoVer" -NoNewline -ForegroundColor Green } else { Write-Host "Choco: NOT FOUND" -NoNewline -ForegroundColor Red }
+    if ($chocoVer) {
+        if ($chocoLatest -and $chocoLatest -ne $chocoVer) {
+            Write-Host "Choco: v$chocoVer (latest v$chocoLatest)" -NoNewline -ForegroundColor Yellow
+        } else {
+            Write-Host "Choco: v$chocoVer" -NoNewline -ForegroundColor Green
+        }
+    } else {
+        Write-Host "Choco: NOT FOUND" -NoNewline -ForegroundColor Red
+    }
     Write-Host " | " -NoNewline
     if ($wingetVer) { Write-Host "Winget: $wingetVer" -ForegroundColor Green } else { Write-Host "Winget: NOT FOUND" -ForegroundColor Red }
     Write-Host "Admin: " -NoNewline; if (Test-IsAdmin) { Write-Host "YES" -ForegroundColor Green } else { Write-Host "NO" -ForegroundColor Yellow }
@@ -137,6 +147,9 @@ do {
     if (-not (Test-IsAdmin)) {
         $menuItems += "Elevate to Admin"
     }
+    if (-not (Get-ChocoVersionInfo).IsInstalled) {
+        $menuItems += "Install Chocolatey"
+    }
     $menuItems += "Quit"
 
     Show-Footer
@@ -171,6 +184,10 @@ do {
         "Elevate to Admin" {
             Invoke-ElevatedAction -FilePath (Join-Path $PSScriptRoot "choco-manager.ps1")
             return
+        }
+        "Install Chocolatey" {
+            Install-Chocolatey
+            Pause
         }
         "Quit" { return }
         Default { }
