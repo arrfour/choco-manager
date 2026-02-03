@@ -134,14 +134,30 @@ function Show-PackageList {
 do {
     Show-Header
     $menuItems = @(
-        "Package Utilities (Search/Info/Remove)",
-        "List/View Packages",
+        "--- Inventory ---",
+        "List/View Packages (Combined)",
+        "List Local Packages (Choco)",
+        "List Local Packages (Winget)",
+        "",
+        "--- Package Lists ---",
         "Export/Update List from Local",
         "Install Missing Packages",
+        "Synchronize (Full Match)",
+        "",
+        "--- Updates ---",
         "Interactive Update (Selectable)",
         "Update All Packages (Silent)",
-        "Synchronize (Full Match)",
+        "",
+        "--- Search and Info ---",
+        "Search Chocolatey Repository",
+        "Search Winget Repository",
+        "Package Info (by name)",
+        "",
+        "--- Tools ---",
+        "Package Utilities",
         "Winget Tools",
+        "",
+        "--- Logs and Help ---",
         "View Audit Log"
     )
     if (-not (Test-IsAdmin)) {
@@ -155,6 +171,9 @@ do {
     Show-Footer
 
     $choice = Get-MenuSelection -Items $menuItems -Title "Main Menu (Use arrows, j/k, Enter, /)" -CommandToken "__COMMAND__"
+    if ([string]::IsNullOrWhiteSpace($choice) -or $choice -match '^---') {
+        continue
+    }
 
     if ($choice -eq "__COMMAND__") {
         $cmd = Invoke-CommandPalette
@@ -172,13 +191,22 @@ do {
     }
 
     switch ($choice) {
-        "Package Utilities (Search/Info/Remove)" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Choco\choco-package-explorer.ps1") }
-        "List/View Packages" { Show-PackageList; Pause }
+        "List/View Packages (Combined)" { Show-PackageList; Pause }
+        "List Local Packages (Choco)" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Choco\choco-package-explorer.ps1") -Action ListChoco; Pause }
+        "List Local Packages (Winget)" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Winget\winget-utils.ps1") -Action ListOnly; Pause }
         "Export/Update List from Local" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Choco\list-choco-apps.ps1"); Pause }
         "Install Missing Packages" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Choco\choco-pack-install.ps1"); Pause }
+        "Synchronize (Full Match)" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Choco\choco-sync.ps1") -Action Sync; Pause }
         "Interactive Update (Selectable)" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Choco\choco-upgrade-interactive.ps1"); Pause }
         "Update All Packages (Silent)" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Choco\choco-utils.ps1") -Action Update; Pause }
-        "Synchronize (Full Match)" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Choco\choco-sync.ps1") -Action Sync; Pause }
+        "Search Chocolatey Repository" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Choco\choco-package-explorer.ps1") }
+        "Search Winget Repository" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Winget\winget-utils.ps1") -Action Search }
+        "Package Info (by name)" {
+            $pkg = Read-Host "Enter package name"
+            $safePkg = Get-ValidatedPackageId -Id $pkg -Context "Chocolatey"
+            if ($safePkg) { choco info $safePkg; Pause }
+        }
+        "Package Utilities" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Choco\choco-package-explorer.ps1") }
         "Winget Tools" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Winget\winget-utils.ps1") -Action Interactive }
         "View Audit Log" { Show-AuditLog; Pause }
         "Elevate to Admin" {

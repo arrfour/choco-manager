@@ -266,194 +266,241 @@ function Get-MenuSelection {
 
     if ($Items.Count -eq 0) { return $null }
 
+    $rawUi = $null
+    $rawUiAvailable = $false
+    try {
+        $rawUi = $Host.UI.RawUI
+        if ($null -ne $rawUi) { $rawUiAvailable = $true }
+    } catch {
+        $rawUiAvailable = $false
+    }
+
+    if (-not $rawUiAvailable) {
+        Write-Host $Title -ForegroundColor Cyan
+        for ($i = 0; $i -lt $Items.Count; $i++) {
+            Write-Host ("[{0}] {1}" -f ($i + 1), $Items[$i])
+        }
+        $prompt = if ($CommandToken) { "Select number, '/' for commands, or Q to quit" } else { "Select number or Q to quit" }
+        $input = Read-Host $prompt
+        if ([string]::IsNullOrWhiteSpace($input)) { return $null }
+        if ($CommandToken -and $input.Trim() -eq "/") { return $CommandToken }
+        if ($input.Trim().ToLowerInvariant() -eq "q") { return $null }
+        $index = 0
+        if ([int]::TryParse($input.Trim(), [ref]$index)) {
+            if ($index -ge 1 -and $index -le $Items.Count) { return $Items[$index - 1] }
+        }
+        return $null
+    }
+
     if ($EnableMultiColumn -and -not $EnablePaging) {
         $EnablePaging = $true
     }
 
     $selectedIndex = 0
-    $startPosition = $Host.UI.RawUI.CursorPosition
+    $startPosition = $rawUi.CursorPosition
     $running = $true
     $needsRender = $true
-    $lastWindowSize = $Host.UI.RawUI.WindowSize
+    $lastWindowSize = $rawUi.WindowSize
     $effectivePageSize = $Items.Count
     $currentSortIndex = if ($SortIndex -ge 0 -and $SortIndex -lt $SortModes.Count) { $SortIndex } else { 0 }
     $lastRenderLines = 0
+    $selectedResult = $null
+    $originalCursorSize = $null
 
-    try { $Host.UI.RawUI.CursorSize = 0 } catch {}
+    try { $originalCursorSize = $rawUi.CursorSize } catch {}
+    try { $rawUi.CursorSize = 0 } catch {}
 
-    while ($running) {
-        $windowSize = $Host.UI.RawUI.WindowSize
-        if ($windowSize.Width -ne $lastWindowSize.Width -or $windowSize.Height -ne $lastWindowSize.Height) {
-            $needsRender = $true
-            $lastWindowSize = $windowSize
-        }
-
-        if ($needsRender) {
-            $Host.UI.RawUI.CursorPosition = $startPosition
-
-            $headerLines = if ($SortModes.Count -gt 1) { 3 } else { 2 }
-            if ($HeaderRow) { $headerLines += 1 }
-            $footerLines = 2
-            $lineWidth = [Math]::Max(1, $windowSize.Width - 1)
-            $availableRows = [Math]::Max(1, $windowSize.Height - ($headerLines + $footerLines))
-
-            $effectivePageSize = $Items.Count
-            $columnCount = 1
-            $columnWidth = 0
-
-            if ($EnableMultiColumn) {
-                $maxItemLength = 0
-                foreach ($item in $Items) {
-                    $len = [string]$item
-                    if ($len.Length -gt $maxItemLength) { $maxItemLength = $len.Length }
-                }
-                $columnWidth = $maxItemLength + 3 + $ColumnPadding
-                if ($columnWidth -lt 10) { $columnWidth = 10 }
-                if ($columnWidth -gt $lineWidth) { $columnWidth = $lineWidth }
-                $maxColumns = [Math]::Max(1, [Math]::Floor($windowSize.Width / $columnWidth))
-                $columnCount = if ($Columns -gt 0) { [Math]::Min($Columns, $maxColumns) } else { $maxColumns }
-                if ($columnCount -lt 1) { $columnCount = 1 }
+    try {
+        while ($running) {
+            $windowSize = $rawUi.WindowSize
+            if ($windowSize.Width -ne $lastWindowSize.Width -or $windowSize.Height -ne $lastWindowSize.Height) {
+                $needsRender = $true
+                $lastWindowSize = $windowSize
             }
 
-            if ($EnablePaging) {
+            if ($needsRender) {
+                $rawUi.CursorPosition = $startPosition
+
+                $headerLines = if ($SortModes.Count -gt 1) { 3 } else { 2 }
+                if ($HeaderRow) { $headerLines += 1 }
+                $footerLines = 2
+                $bufferWidth = $rawUi.BufferSize.Width
+                $lineWidth = [Math]::Max(1, ([Math]::Min($windowSize.Width, $bufferWidth) - 1))
+                $availableRows = [Math]::Max(1, $windowSize.Height - ($headerLines + $footerLines))
+
+                $effectivePageSize = $Items.Count
+                $columnCount = 1
+                $columnWidth = 0
+
                 if ($EnableMultiColumn) {
-                    $effectivePageSize = $availableRows * $columnCount
-                } elseif ($PageSize -gt 0) {
-                    $effectivePageSize = $PageSize
-                } else {
-                    $effectivePageSize = $availableRows
+                    $maxItemLength = 0
+                    foreach ($item in $Items) {
+                        $len = [string]$item
+                        if ($len.Length -gt $maxItemLength) { $maxItemLength = $len.Length }
+                    }
+                    $columnWidth = $maxItemLength + 3 + $ColumnPadding
+                    if ($columnWidth -lt 10) { $columnWidth = 10 }
+                    if ($columnWidth -gt $lineWidth) { $columnWidth = $lineWidth }
+                    $maxColumns = [Math]::Max(1, [Math]::Floor($windowSize.Width / $columnWidth))
+                    $columnCount = if ($Columns -gt 0) { [Math]::Min($Columns, $maxColumns) } else { $maxColumns }
+                    if ($columnCount -lt 1) { $columnCount = 1 }
                 }
 
-                if ($effectivePageSize -lt 1) { $effectivePageSize = 1 }
-            }
+                if ($EnablePaging) {
+                    if ($EnableMultiColumn) {
+                        $effectivePageSize = $availableRows * $columnCount
+                    } elseif ($PageSize -gt 0) {
+                        $effectivePageSize = $PageSize
+                    } else {
+                        $effectivePageSize = $availableRows
+                    }
 
-            $pageStart = if ($EnablePaging) { [Math]::Floor($selectedIndex / $effectivePageSize) * $effectivePageSize } else { 0 }
-            $pageEnd = [Math]::Min($Items.Count, $pageStart + $effectivePageSize) - 1
-            $pageItems = if ($pageEnd -ge $pageStart) { $Items[$pageStart..$pageEnd] } else { @() }
+                    if ($effectivePageSize -lt 1) { $effectivePageSize = 1 }
+                }
 
-            Write-Host "$Title" -ForegroundColor Cyan
-            if ($SortModes.Count -gt 1) {
-                $sortLabel = $SortModes[$currentSortIndex]
-                Write-Host "Sort: $sortLabel (S to change)" -ForegroundColor DarkGray
-            }
-            if ($HeaderRow) {
-                $headerText = $HeaderRow
-                if ($headerText.Length -gt $lineWidth) { $headerText = $headerText.Substring(0, $lineWidth) }
-                Write-Host $headerText -ForegroundColor Gray
-            }
-            Write-Host ""
+                $pageStart = if ($EnablePaging) { [Math]::Floor($selectedIndex / $effectivePageSize) * $effectivePageSize } else { 0 }
+                $pageEnd = [Math]::Min($Items.Count, $pageStart + $effectivePageSize) - 1
+                $pageItems = if ($pageEnd -ge $pageStart) { $Items[$pageStart..$pageEnd] } else { @() }
 
-            $renderedRows = 0
-            if ($EnableMultiColumn -and $columnCount -gt 1) {
-                $rows = [Math]::Ceiling($pageItems.Count / $columnCount)
-                $renderedRows = $rows
-                for ($r = 0; $r -lt $rows; $r++) {
-                    for ($c = 0; $c -lt $columnCount; $c++) {
-                        $index = ($r * $columnCount) + $c
-                        if ($index -lt $pageItems.Count) {
-                            $itemIndex = $pageStart + $index
-                            $prefix = if ($itemIndex -eq $selectedIndex) { " > " } else { "   " }
-                            $text = "$prefix$($Items[$itemIndex])"
-                            if ($text.Length -gt $columnWidth) { $text = $text.Substring(0, $columnWidth) }
-                            $cell = $text.PadRight($columnWidth)
-                            if ($itemIndex -eq $selectedIndex) {
-                                Write-Host $cell -NoNewline -BackgroundColor White -ForegroundColor Black
+                Write-Host "$Title" -ForegroundColor Cyan
+                if ($SortModes.Count -gt 1) {
+                    $sortLabel = $SortModes[$currentSortIndex]
+                    Write-Host "Sort: $sortLabel (S to change)" -ForegroundColor DarkGray
+                }
+                if ($HeaderRow) {
+                    $headerText = $HeaderRow
+                    if ($headerText.Length -gt $lineWidth) { $headerText = $headerText.Substring(0, $lineWidth) }
+                    Write-Host $headerText -ForegroundColor Gray
+                }
+                Write-Host ""
+
+                $renderedRows = 0
+                if ($EnableMultiColumn -and $columnCount -gt 1) {
+                    $rows = [Math]::Ceiling($pageItems.Count / $columnCount)
+                    $renderedRows = $rows
+                    for ($r = 0; $r -lt $rows; $r++) {
+                        for ($c = 0; $c -lt $columnCount; $c++) {
+                            $index = ($r * $columnCount) + $c
+                            if ($index -lt $pageItems.Count) {
+                                $itemIndex = $pageStart + $index
+                                $prefix = if ($itemIndex -eq $selectedIndex) { " > " } else { "   " }
+                                $text = "$prefix$($Items[$itemIndex])"
+                                if ($text.Length -gt $columnWidth) { $text = $text.Substring(0, $columnWidth) }
+                                $cell = $text.PadRight($columnWidth)
+                                if ($itemIndex -eq $selectedIndex) {
+                                    Write-Host $cell -NoNewline -BackgroundColor White -ForegroundColor Black
+                                } else {
+                                    Write-Host $cell -NoNewline
+                                }
                             } else {
-                                Write-Host $cell -NoNewline
+                                Write-Host ("".PadRight($columnWidth)) -NoNewline
+                            }
+                        }
+                        Write-Host ""
+                    }
+                } else {
+                    $renderedRows = $pageItems.Count
+                    for ($i = 0; $i -lt $pageItems.Count; $i++) {
+                        $itemIndex = $pageStart + $i
+                        if ($itemIndex -eq $selectedIndex) {
+                            $prefix = " > "
+                            $available = [Math]::Max(1, $lineWidth - $prefix.Length)
+                            $itemText = "$($Items[$itemIndex])"
+                            if ($itemText.Length -gt $available) { $itemText = $itemText.Substring(0, $available) }
+                            $lineText = "$prefix$itemText"
+                            $padCount = $lineWidth - $lineText.Length
+                            if ($padCount -lt 0) { $padCount = 0 }
+                            Write-Host $prefix -NoNewline -ForegroundColor Yellow
+                            Write-Host $itemText -NoNewline -BackgroundColor White -ForegroundColor Black
+                            if ($padCount -gt 0) {
+                                Write-Host ("".PadRight($padCount)) -BackgroundColor White -ForegroundColor Black
+                            } else {
+                                Write-Host ""
                             }
                         } else {
-                            Write-Host ("".PadRight($columnWidth)) -NoNewline
+                            $prefix = "   "
+                            $available = [Math]::Max(1, $lineWidth - $prefix.Length)
+                            $itemText = "$($Items[$itemIndex])"
+                            if ($itemText.Length -gt $available) { $itemText = $itemText.Substring(0, $available) }
+                            $lineText = "$prefix$itemText"
+                            if ($lineText.Length -lt $lineWidth) {
+                                $lineText = $lineText.PadRight($lineWidth)
+                            }
+                            Write-Host $lineText
                         }
                     }
-                    Write-Host ""
+                }
+
+                $footer = "(Arrows: Navigate | Enter: Select | Esc/Q: Quit)"
+                if ($SortModes.Count -gt 1) { $footer = "$footer | S: Sort" }
+                Write-Host "`n$footer" -ForegroundColor Gray
+
+                $currentRenderLines = $headerLines + $renderedRows + $footerLines
+                if ($lastRenderLines -gt $currentRenderLines) {
+                    $extra = $lastRenderLines - $currentRenderLines
+                    for ($i = 0; $i -lt $extra; $i++) {
+                        Write-Host ("".PadRight($lineWidth))
+                    }
+                }
+                $lastRenderLines = $currentRenderLines
+                $needsRender = $false
+            }
+
+            if ($rawUi.KeyAvailable) {
+                $key = $rawUi.ReadKey("NoEcho,IncludeKeyDown")
+                $char = $key.Character
+                $handled = $false
+                if ($char) {
+                    $lowerChar = $char.ToString().ToLowerInvariant()
+                    switch ($lowerChar) {
+                        "j" { $selectedIndex = ($selectedIndex + 1) % $Items.Count; $needsRender = $true; $handled = $true }
+                        "k" { $selectedIndex = ($selectedIndex - 1 + $Items.Count) % $Items.Count; $needsRender = $true; $handled = $true }
+                        "q" { $selectedResult = $null; $running = $false; $handled = $true }
+                        "/" { $selectedResult = $CommandToken; $running = $false; $handled = $true }
+                    }
+                }
+                if (-not $handled) {
+                    switch ($key.VirtualKeyCode) {
+                        38 { $selectedIndex = ($selectedIndex - 1 + $Items.Count) % $Items.Count; $needsRender = $true } # Up
+                        40 { $selectedIndex = ($selectedIndex + 1) % $Items.Count; $needsRender = $true } # Down
+                        33 {
+                            $jump = if ($EnablePaging) { $effectivePageSize } else { 1 }
+                            $selectedIndex = [Math]::Max(0, $selectedIndex - $jump)
+                            $needsRender = $true
+                        } # PageUp
+                        34 {
+                            $jump = if ($EnablePaging) { $effectivePageSize } else { 1 }
+                            $selectedIndex = [Math]::Min($Items.Count - 1, $selectedIndex + $jump)
+                            $needsRender = $true
+                        } # PageDown
+                        36 { $selectedIndex = 0; $needsRender = $true } # Home
+                        35 { $selectedIndex = $Items.Count - 1; $needsRender = $true } # End
+                        13 { $selectedResult = $Items[$selectedIndex]; $running = $false } # Enter
+                        27 { $selectedResult = $null; $running = $false } # Esc
+                        83 {
+                            if ($SortModes.Count -gt 1 -and $SortHandler) {
+                                $currentSortIndex = ($currentSortIndex + 1) % $SortModes.Count
+                                $Items = & $SortHandler $currentSortIndex
+                                if (-not $Items) { $Items = @() }
+                                if ($Items.Count -eq 0) { $selectedResult = $null; $running = $false }
+                                $selectedIndex = 0
+                                $needsRender = $true
+                            }
+                        } # S
+                    }
                 }
             } else {
-                $renderedRows = $pageItems.Count
-                for ($i = 0; $i -lt $pageItems.Count; $i++) {
-                    $itemIndex = $pageStart + $i
-                    if ($itemIndex -eq $selectedIndex) {
-                        $prefix = " > "
-                        $available = [Math]::Max(1, $lineWidth - $prefix.Length)
-                        $itemText = "$($Items[$itemIndex])"
-                        if ($itemText.Length -gt $available) { $itemText = $itemText.Substring(0, $available) }
-                        $lineText = "$prefix$itemText"
-                        $padCount = $lineWidth - $lineText.Length
-                        if ($padCount -lt 0) { $padCount = 0 }
-                        Write-Host $prefix -NoNewline -ForegroundColor Yellow
-                        Write-Host $itemText -NoNewline -BackgroundColor White -ForegroundColor Black
-                        if ($padCount -gt 0) {
-                            Write-Host ("".PadRight($padCount)) -BackgroundColor White -ForegroundColor Black
-                        } else {
-                            Write-Host ""
-                        }
-                    } else {
-                        $prefix = "   "
-                        $available = [Math]::Max(1, $lineWidth - $prefix.Length)
-                        $itemText = "$($Items[$itemIndex])"
-                        if ($itemText.Length -gt $available) { $itemText = $itemText.Substring(0, $available) }
-                        $lineText = "$prefix$itemText"
-                        if ($lineText.Length -lt $lineWidth) {
-                            $lineText = $lineText.PadRight($lineWidth)
-                        }
-                        Write-Host $lineText
-                    }
-                }
+                Start-Sleep -Milliseconds 25
             }
-
-            $footer = "(Arrows: Navigate | Enter: Select | Esc/Q: Quit)"
-            if ($SortModes.Count -gt 1) { $footer = "$footer | S: Sort" }
-            Write-Host "`n$footer" -ForegroundColor Gray
-
-            $currentRenderLines = $headerLines + $renderedRows + $footerLines
-            if ($lastRenderLines -gt $currentRenderLines) {
-                $extra = $lastRenderLines - $currentRenderLines
-                for ($i = 0; $i -lt $extra; $i++) {
-                    Write-Host ("".PadRight($lineWidth))
-                }
-            }
-            $lastRenderLines = $currentRenderLines
-            $needsRender = $false
-        }
-
-        if ($Host.UI.RawUI.KeyAvailable) {
-            $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-            switch ($key.VirtualKeyCode) {
-                38 { $selectedIndex = ($selectedIndex - 1 + $Items.Count) % $Items.Count; $needsRender = $true } # Up
-                40 { $selectedIndex = ($selectedIndex + 1) % $Items.Count; $needsRender = $true } # Down
-                74 { $selectedIndex = ($selectedIndex + 1) % $Items.Count; $needsRender = $true } # J
-                75 { $selectedIndex = ($selectedIndex - 1 + $Items.Count) % $Items.Count; $needsRender = $true } # K
-                33 {
-                    $jump = if ($EnablePaging) { $effectivePageSize } else { 1 }
-                    $selectedIndex = [Math]::Max(0, $selectedIndex - $jump)
-                    $needsRender = $true
-                } # PageUp
-                34 {
-                    $jump = if ($EnablePaging) { $effectivePageSize } else { 1 }
-                    $selectedIndex = [Math]::Min($Items.Count - 1, $selectedIndex + $jump)
-                    $needsRender = $true
-                } # PageDown
-                36 { $selectedIndex = 0; $needsRender = $true } # Home
-                35 { $selectedIndex = $Items.Count - 1; $needsRender = $true } # End
-                13 { $running = $false; return $Items[$selectedIndex] } # Enter
-                27 { $running = $false; return $null } # Esc
-                81 { $running = $false; return $null } # Q
-                191 { $running = $false; return $CommandToken } # /
-                83 {
-                    if ($SortModes.Count -gt 1 -and $SortHandler) {
-                        $currentSortIndex = ($currentSortIndex + 1) % $SortModes.Count
-                        $Items = & $SortHandler $currentSortIndex
-                        if (-not $Items) { $Items = @() }
-                        if ($Items.Count -eq 0) { return $null }
-                        $selectedIndex = 0
-                        $needsRender = $true
-                    }
-                } # S
-            }
-        } else {
-            Start-Sleep -Milliseconds 50
         }
     }
-    try { $Host.UI.RawUI.CursorSize = 25 } catch {}
+    finally {
+        if ($null -ne $originalCursorSize) {
+            try { $rawUi.CursorSize = $originalCursorSize } catch {}
+        }
+    }
+
+    return $selectedResult
 }
 
 # Ensure functions are available when dot-sourced

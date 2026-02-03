@@ -1,6 +1,6 @@
 # Basic Winget wrapper for Choco-Manager
 param(
-    [ValidateSet("Install", "List", "Search", "Info", "Remove", "Interactive")]
+    [ValidateSet("Install", "List", "Search", "Info", "Remove", "Interactive", "ListOnly")]
     [string]$Action = "Interactive",
     
     [string]$PackageId,
@@ -232,6 +232,7 @@ function Invoke-WingetInteractive {
 
 switch ($Action) {
     "List" { Invoke-WingetList }
+    "ListOnly" { Invoke-WingetList }
     "Install" { if (-not $PackageId) { Write-Log "Package ID required for Winget Install." "ERROR"; return }; Invoke-WingetInstall -Id $PackageId }
     "Search" { Invoke-WingetSearchInteractive -Term $Query }
     "Info" { if (-not $PackageId) { Write-Log "Package ID required for Winget Info." "ERROR"; return }; Invoke-WingetInfo -Id $PackageId }

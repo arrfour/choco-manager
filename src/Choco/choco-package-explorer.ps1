@@ -1,6 +1,11 @@
 # choco-package-explorer.ps1
 # Interactive package utilities: List, Search, and Info
 
+param(
+    [ValidateSet("Interactive", "ListChoco", "ListWinget", "ListCombined")]
+    [string]$Action = "Interactive"
+)
+
 # 1. Load core functions
 $corePath = Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..\..")) "src\Core\core-functions.ps1"
 if (Test-Path $corePath) { . $corePath }
@@ -248,6 +253,14 @@ function Search-Packages {
         }
         Pause
     }
+}
+
+# Non-interactive entrypoints for list views
+switch ($Action) {
+    "ListChoco" { Show-ChocoLocalPackages; return }
+    "ListWinget" { Show-WingetLocalPackages; return }
+    "ListCombined" { Show-CombinedLocalPackages; return }
+    Default { }
 }
 
 # Sub-menu Loop
