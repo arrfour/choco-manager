@@ -1,9 +1,9 @@
 # Choco-List Manager
 
-![Version](https://img.shields.io/badge/version-20260201.01-blue.svg)
+![Version](https://img.shields.io/badge/version-20260211.01-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-**Version 20260201.01**
+**Version 20260211.01**
 
 A set of PowerShell scripts to manage and synchronize your Chocolatey packages across Windows machines.
 
