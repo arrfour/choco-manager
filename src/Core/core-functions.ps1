@@ -371,7 +371,7 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$PackageUrl,
     [Parameter(Mandatory=$true)]
-    [string]$BootstrapScriptPath
+    [string]$SelfPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -414,13 +414,13 @@ try {
         Write-Warning "Unable to remove the downloaded file zone marker from $installScript: $($_.Exception.Message)"
     }
     & $installScript
-    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+    if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) {
         throw "Chocolatey installer exited with code $LASTEXITCODE."
     }
 }
 finally {
     Remove-Item -Path $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path $BootstrapScriptPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $SelfPath -Force -ErrorAction SilentlyContinue
 }
 '@
 
@@ -428,7 +428,7 @@ finally {
 
     try {
         $trustedPowerShell = Get-TrustedPowerShellPath
-        Invoke-ElevatedProcess -FilePath $trustedPowerShell -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $bootstrapPath, "-PackageUrl", "https://community.chocolatey.org/api/v2/package/chocolatey", "-BootstrapScriptPath", $bootstrapPath)
+        Invoke-ElevatedProcess -FilePath $trustedPowerShell -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $bootstrapPath, "-PackageUrl", "https://community.chocolatey.org/api/v2/package/chocolatey", "-SelfPath", $bootstrapPath)
     }
     catch {
         Remove-Item -Path $bootstrapPath -Force -ErrorAction SilentlyContinue
