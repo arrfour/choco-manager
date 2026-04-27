@@ -414,7 +414,7 @@ try {
         Write-Warning "Unable to remove the downloaded file zone marker from $installScript: $($_.Exception.Message)"
     }
     & $installScript
-    if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) {
+    if ($LASTEXITCODE -ne 0) {
         throw "Chocolatey installer exited with code $LASTEXITCODE."
     }
 }

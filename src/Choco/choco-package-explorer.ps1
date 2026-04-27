@@ -215,8 +215,9 @@ function Search-Packages {
         }
     } else {
         # Winget Search
-        $raw = Invoke-TrustedExecutable -CommandName "winget" -ArgumentList @("search", $keyword, "--source", (Get-TrustedWingetSource))
-        $raw
+        Invoke-TrustedExecutable -CommandName "winget" -ArgumentList @("search", $keyword, "--source", (Get-TrustedWingetSource)) | ForEach-Object {
+            Write-Host $_
+        }
         $id = Read-Host "`nEnter Package ID for more info (or press Enter to skip)"
         if ($id) {
             $safeId = Get-ValidatedPackageId -Id $id -Context "Winget"
