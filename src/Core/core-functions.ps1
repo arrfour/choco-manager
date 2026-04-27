@@ -84,7 +84,7 @@ function Get-LogFileLevels {
     return $configuredLevels
 }
 
-function Test-ShouldPersistLogEntry {
+function Test-LogLevelPersistence {
     param(
         [Parameter(Mandatory=$true)]
         [string]$Level
@@ -280,7 +280,7 @@ function Write-Log {
     Write-Host $logEntry -ForegroundColor $color
     
     # File Output
-    if (Test-ShouldPersistLogEntry -Level $Level) {
+    if (Test-LogLevelPersistence -Level $Level) {
         try {
             $logDir = Split-Path -Parent $LogPath
             if (-not (Test-Path $logDir)) {
