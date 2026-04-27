@@ -348,7 +348,9 @@ function Install-Chocolatey {
     $bootstrapScript = @'
 param(
     [Parameter(Mandatory=$true)]
-    [string]$PackageUrl
+    [string]$PackageUrl,
+    [Parameter(Mandatory=$true)]
+    [string]$BootstrapScriptPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -387,7 +389,7 @@ try {
 }
 finally {
     Remove-Item -Path $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path $PSCommandPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $BootstrapScriptPath -Force -ErrorAction SilentlyContinue
 }
 '@
 
@@ -395,7 +397,7 @@ finally {
 
     try {
         $trustedPowerShell = Get-TrustedPowerShellPath
-        Invoke-ElevatedProcess -FilePath $trustedPowerShell -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $bootstrapPath, "-PackageUrl", "https://community.chocolatey.org/api/v2/package/chocolatey")
+        Invoke-ElevatedProcess -FilePath $trustedPowerShell -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $bootstrapPath, "-PackageUrl", "https://community.chocolatey.org/api/v2/package/chocolatey", "-BootstrapScriptPath", $bootstrapPath)
     }
     catch {
         Remove-Item -Path $bootstrapPath -Force -ErrorAction SilentlyContinue
