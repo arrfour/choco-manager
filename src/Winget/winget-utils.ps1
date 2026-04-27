@@ -82,8 +82,9 @@ function Invoke-WingetInstall {
     $safeId = Get-ValidatedPackageId -Id $Id -Context "Winget"
     if (-not $safeId) { return }
 
-    Write-Host "Trusted Winget source: $(Get-TrustedWingetSource)" -ForegroundColor DarkGray
-    if (-not (Read-Confirmation -Prompt "Install '$safeId' from the approved Winget source? Type y to continue" -ExpectedValue "y")) {
+    $trustedSource = Get-TrustedWingetSource
+    Write-Host "Trusted Winget source: $trustedSource" -ForegroundColor DarkGray
+    if (-not (Read-Confirmation -Prompt "Install '$safeId' from the approved Winget source '$trustedSource'? Type y to continue" -ExpectedValue "y")) {
         Write-Log "Winget install cancelled by user." "WARN"
         return
     }

@@ -28,6 +28,12 @@ if (-not $SkipUpgradeChoco) {
 
 # Get currently installed packages for comparison
 $installedPackages = Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("list", "--local-only", "--limit-output") | ForEach-Object { $_.Split('|')[0] }
+$installedSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+foreach ($installedPackage in $installedPackages) {
+    if (-not [string]::IsNullOrWhiteSpace($installedPackage)) {
+        $null = $installedSet.Add($installedPackage)
+    }
+}
 
 # Read target packages using core helper
 $targetPackages = Get-PackageList -Path $InputFile
@@ -37,7 +43,7 @@ if ($targetPackages.Count -eq 0) {
     exit
 }
 
-$missingPackages = $targetPackages | Where-Object { $installedPackages -notcontains $_ }
+$missingPackages = $targetPackages | Where-Object { -not $installedSet.Contains($_) }
 if ($missingPackages.Count -eq 0) {
     Write-Log "All packages from $InputFile are already installed." "SUCCESS"
     exit

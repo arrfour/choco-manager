@@ -231,6 +231,21 @@ function Get-TrustedWingetSource {
     return "winget"
 }
 
+function Get-SecureBootstrapDirectory {
+    $baseDirectory = if ($env:LOCALAPPDATA) {
+        Join-Path $env:LOCALAPPDATA "Choco-Manager\bootstrap"
+    }
+    else {
+        Join-Path (Get-ProjectRoot) "logs\bootstrap"
+    }
+
+    if (-not (Test-Path $baseDirectory)) {
+        New-Item -ItemType Directory -Path $baseDirectory -Force | Out-Null
+    }
+
+    return (Get-NormalizedPath -Path $baseDirectory)
+}
+
 function Read-Confirmation {
     param(
         [Parameter(Mandatory=$true)]
@@ -322,7 +337,12 @@ function Get-ChocoVersionInfo {
     }
 
     $info.IsInstalled = $true
-    try { $info.InstalledVersion = ((Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("--version")) | Select-Object -First 1).Trim() } catch { }
+    try {
+        $info.InstalledVersion = ((Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("--version")) | Select-Object -First 1).Trim()
+    }
+    catch {
+        Write-Log "Unable to determine the installed Chocolatey version: $($_.Exception.Message)" "WARN"
+    }
     try {
         $raw = Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("list", "chocolatey", "--exact", "-r", "--source", (Get-TrustedChocolateySource)) 2>$null
         foreach ($line in $raw) {
@@ -344,7 +364,8 @@ function Install-Chocolatey {
     Write-Host "The installer will download the Chocolatey package, display its SHA256 hash, and require explicit confirmation before running the local install script." -ForegroundColor Yellow
     if (-not (Read-Confirmation -Prompt "Proceed with the secured bootstrap flow? Type y to continue" -ExpectedValue "y")) { return }
 
-    $bootstrapPath = Join-Path $env:TEMP ("choco-manager-bootstrap-{0}.ps1" -f ([Guid]::NewGuid().ToString("N")))
+    $bootstrapDirectory = Get-SecureBootstrapDirectory
+    $bootstrapPath = Join-Path $bootstrapDirectory ("bootstrap-{0}.ps1" -f ([Guid]::NewGuid().ToString("N")))
     $bootstrapScript = @'
 param(
     [Parameter(Mandatory=$true)]
@@ -361,7 +382,12 @@ if ($packageUri.Scheme -ne "https" -or $packageUri.Host -ne "community.chocolate
     throw "Rejected Chocolatey package URL: $PackageUrl"
 }
 
-$tempRoot = Join-Path $env:TEMP ("choco-manager-install-" + [Guid]::NewGuid().ToString("N"))
+$bootstrapRoot = if ($env:LOCALAPPDATA) {
+    Join-Path $env:LOCALAPPDATA "Choco-Manager\bootstrap"
+} else {
+    Join-Path $env:TEMP "Choco-Manager-bootstrap"
+}
+$tempRoot = Join-Path $bootstrapRoot ("install-" + [Guid]::NewGuid().ToString("N"))
 $packagePath = Join-Path $tempRoot "chocolatey.nupkg"
 $extractPath = Join-Path $tempRoot "package"
 
@@ -381,7 +407,12 @@ try {
         throw "Could not locate chocolateyInstall.ps1 inside the Chocolatey package."
     }
 
-    Unblock-File -Path $installScript -ErrorAction SilentlyContinue
+    try {
+        Unblock-File -Path $installScript -ErrorAction Stop
+    }
+    catch {
+        Write-Warning "Unable to remove the downloaded file zone marker from $installScript: $($_.Exception.Message)"
+    }
     & $installScript
     if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
         throw "Chocolatey installer exited with code $LASTEXITCODE."
