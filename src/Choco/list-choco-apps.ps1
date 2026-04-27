@@ -7,16 +7,17 @@ param(
 . (Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..\..")) "src\Core\core-functions.ps1")
 
 if (-not $OutputFile) {
-    $scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
-    $OutputFile = Join-Path (Resolve-Path (Join-Path $scriptRoot "..\..")) "data\choco_packages.txt"
+    $OutputFile = Get-DefaultPackageListPath
 }
+
+$OutputFile = Resolve-ManagedDataFilePath -Path $OutputFile -Purpose "package export"
 
 Write-Log "Exporting local Chocolatey packages to $OutputFile..." "INFO"
 
 try {
     # Query choco for installed packages
     # --idonly and --limit-output provide a clean list
-    $packages = choco list --idonly --limit-output
+    $packages = Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("list", "--idonly", "--limit-output")
     
     if ($LASTEXITCODE -ne 0) {
         throw "Chocolatey command failed with exit code $LASTEXITCODE"
@@ -25,6 +26,10 @@ try {
     $sortedPackages = $packages | Sort-Object | Select-Object -Unique
 
     # Save to file
+    $outputDirectory = Split-Path -Parent $OutputFile
+    if (-not (Test-Path $outputDirectory)) {
+        New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
+    }
     $sortedPackages | Out-File -FilePath $OutputFile -Encoding UTF8 -Force
     
     Write-Log "Successfully exported $($sortedPackages.Count) packages." "SUCCESS"

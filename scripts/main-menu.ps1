@@ -20,7 +20,11 @@ function Show-Footer {
     $chocoInfo = Get-ChocoVersionInfo
     $chocoVer = if ($chocoInfo.IsInstalled) { $chocoInfo.InstalledVersion } else { $null }
     $chocoLatest = $chocoInfo.LatestVersion
-    $wingetVer = winget --version 2>$null
+    $wingetVer = $null
+    try {
+        $wingetVer = ((Invoke-TrustedExecutable -CommandName "winget" -ArgumentList @("--version")) | Select-Object -First 1)
+    }
+    catch { }
     Write-Host "----------------------------" -ForegroundColor Gray
     if ($chocoVer) {
         if ($chocoLatest -and $chocoLatest -ne $chocoVer) {
@@ -41,7 +45,7 @@ function Show-PackageList {
     Write-Host "`nFetching local packages..." -ForegroundColor Gray
     $items = @()
 
-    $chocoRaw = choco list -lo -r
+    $chocoRaw = Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("list", "-lo", "-r")
     foreach ($line in $chocoRaw) {
         if ($line -match '\|') {
             $parts = $line -split '\|'
@@ -59,9 +63,8 @@ function Show-PackageList {
         }
     }
 
-    $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
-    if ($wingetCmd) {
-        $wingetRaw = winget list
+    try {
+        $wingetRaw = Invoke-TrustedExecutable -CommandName "winget" -ArgumentList @("list")
         if ($LASTEXITCODE -eq 0) {
             foreach ($line in $wingetRaw) {
                 if ($line -match '^\s*Name\s+Id\s+Version') { continue }
@@ -89,6 +92,9 @@ function Show-PackageList {
             Write-Log "Winget list failed (Exit Code: $LASTEXITCODE)." "WARN"
         }
     }
+    catch {
+        Write-Log "Winget list failed: $($_.Exception.Message)" "WARN"
+    }
 
     if ($items.Count -eq 0) {
         Write-Log "No local packages found." "WARN"
@@ -115,14 +121,14 @@ function Show-PackageList {
                 $safeId = Get-ValidatedPackageId -Id $item.Id -Context "Winget"
                 if ($safeId) {
                     Write-Host "`n--- Winget Info for $safeId ---" -ForegroundColor Yellow
-                    winget show --id $safeId
+                    Invoke-TrustedExecutable -CommandName "winget" -ArgumentList @("show", "--id", $safeId, "--exact", "--source", (Get-TrustedWingetSource))
                     Pause
                 }
             } else {
                 $safeId = Get-ValidatedPackageId -Id $item.Id -Context "Chocolatey"
                 if ($safeId) {
                     Write-Host "`n--- Chocolatey Info for $safeId ---" -ForegroundColor Yellow
-                    choco info $safeId
+                    Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("info", $safeId, "--source", (Get-TrustedChocolateySource))
                     Pause
                 }
             }
@@ -181,7 +187,7 @@ do {
             "help" { Show-CommandHelp; Pause }
             "quit" { return }
             "list" { Show-PackageList; Pause }
-            "search" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Choco\choco-package-explorer.ps1") }
+            "search" { Invoke-ScriptFile -FilePath (Join-Path $PSScriptRoot "..\src\Choco\choco-package-explorer.ps1") }
             "logs" { Show-AuditLog; Pause }
             Default {
                 if ($cmd) { Write-Host "Unknown command: $cmd" -ForegroundColor Yellow; Pause }
@@ -192,22 +198,25 @@ do {
 
     switch ($choice) {
         "List/View Packages (Combined)" { Show-PackageList; Pause }
-        "List Local Packages (Choco)" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Choco\choco-package-explorer.ps1") -Action ListChoco; Pause }
-        "List Local Packages (Winget)" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Winget\winget-utils.ps1") -Action ListOnly; Pause }
-        "Export/Update List from Local" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Choco\list-choco-apps.ps1"); Pause }
-        "Install Missing Packages" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Choco\choco-pack-install.ps1"); Pause }
-        "Synchronize (Full Match)" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Choco\choco-sync.ps1") -Action Sync; Pause }
-        "Interactive Update (Selectable)" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Choco\choco-upgrade-interactive.ps1"); Pause }
-        "Update All Packages (Silent)" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Choco\choco-utils.ps1") -Action Update; Pause }
-        "Search Chocolatey Repository" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Choco\choco-package-explorer.ps1") }
-        "Search Winget Repository" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Winget\winget-utils.ps1") -Action Search }
+        "List Local Packages (Choco)" { Invoke-ScriptFile -FilePath (Join-Path $PSScriptRoot "..\src\Choco\choco-package-explorer.ps1") -ArgumentList @("-Action", "ListChoco"); Pause }
+        "List Local Packages (Winget)" { Invoke-ScriptFile -FilePath (Join-Path $PSScriptRoot "..\src\Winget\winget-utils.ps1") -ArgumentList @("-Action", "ListOnly"); Pause }
+        "Export/Update List from Local" { Invoke-ScriptFile -FilePath (Join-Path $PSScriptRoot "..\src\Choco\list-choco-apps.ps1"); Pause }
+        "Install Missing Packages" { Invoke-ScriptFile -FilePath (Join-Path $PSScriptRoot "..\src\Choco\choco-pack-install.ps1"); Pause }
+        "Synchronize (Full Match)" { Invoke-ScriptFile -FilePath (Join-Path $PSScriptRoot "..\src\Choco\choco-sync.ps1") -ArgumentList @("-Action", "Sync"); Pause }
+        "Interactive Update (Selectable)" { Invoke-ScriptFile -FilePath (Join-Path $PSScriptRoot "..\src\Choco\choco-upgrade-interactive.ps1"); Pause }
+        "Update All Packages (Silent)" { Invoke-ScriptFile -FilePath (Join-Path $PSScriptRoot "..\src\Choco\choco-utils.ps1") -ArgumentList @("-Action", "Update"); Pause }
+        "Search Chocolatey Repository" { Invoke-ScriptFile -FilePath (Join-Path $PSScriptRoot "..\src\Choco\choco-package-explorer.ps1") }
+        "Search Winget Repository" { Invoke-ScriptFile -FilePath (Join-Path $PSScriptRoot "..\src\Winget\winget-utils.ps1") -ArgumentList @("-Action", "Search") }
         "Package Info (by name)" {
             $pkg = Read-Host "Enter package name"
             $safePkg = Get-ValidatedPackageId -Id $pkg -Context "Chocolatey"
-            if ($safePkg) { choco info $safePkg; Pause }
+            if ($safePkg) {
+                Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("info", $safePkg, "--source", (Get-TrustedChocolateySource))
+                Pause
+            }
         }
-        "Package Utilities" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Choco\choco-package-explorer.ps1") }
-        "Winget Tools" { powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "..\src\Winget\winget-utils.ps1") -Action Interactive }
+        "Package Utilities" { Invoke-ScriptFile -FilePath (Join-Path $PSScriptRoot "..\src\Choco\choco-package-explorer.ps1") }
+        "Winget Tools" { Invoke-ScriptFile -FilePath (Join-Path $PSScriptRoot "..\src\Winget\winget-utils.ps1") -ArgumentList @("-Action", "Interactive") }
         "View Audit Log" { Show-AuditLog; Pause }
         "Elevate to Admin" {
             Invoke-ElevatedAction -FilePath (Join-Path $PSScriptRoot "choco-manager.ps1")

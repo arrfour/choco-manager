@@ -40,6 +40,7 @@ This interactive tool allows you to check status, export lists, and install pack
 Notes:
 - If Chocolatey is missing, the main menu will show an "Install Chocolatey" option.
 - The footer shows the installed Chocolatey version and, when different, the latest available version.
+- The wrappers now invoke the project scripts directly instead of forcing a blanket process-scope execution policy bypass.
 
 ## Project Layout
 
@@ -96,10 +97,13 @@ The script will:
 ## Security Guidance
 
 - Run the scripts from a trusted, access-controlled directory.
-- Prefer `RemoteSigned` or stronger execution policies when possible. If you must use process-scope bypass, ensure files are from a trusted source.
-- Review `choco_packages.txt` before running install/sync actions.
+- Prefer `RemoteSigned` or stronger execution policies. The project no longer forces routine `ExecutionPolicy Bypass` for normal menu and wrapper launches.
+- Chocolatey installs, searches, and upgrades are restricted to `https://community.chocolatey.org/api/v2/` by default.
+- Winget installs and searches are restricted to the `winget` source by default.
+- Review `data/choco_packages.txt` before running install, update, or sync actions. Managed package list reads and writes are restricted to the repository `data\` directory.
+- The Chocolatey bootstrap flow now downloads the package locally, shows its SHA256 hash, and requires explicit confirmation before executing the local installer.
 - Avoid copying scripts from unknown sources or locations with weak ACLs.
-- Treat `choco-manager.log` as sensitive inventory data; restrict access where appropriate.
+- Treat `logs/choco-manager.log` as sensitive inventory data. By default, only warning and error events are persisted; set `CHOCO_MANAGER_LOG_FILE_LEVELS` if you need broader local audit logging.
 
 ## Disclaimer
 
