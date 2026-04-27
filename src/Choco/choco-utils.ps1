@@ -12,9 +12,10 @@ param(
 . (Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..\..")) "src\Core\core-functions.ps1")
 
 if (-not $InputFile) {
-    $scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
-    $InputFile = Join-Path (Resolve-Path (Join-Path $scriptRoot "..\..")) "data\choco_packages.txt"
+    $InputFile = Get-DefaultPackageListPath
 }
+
+$InputFile = Resolve-ManagedDataFilePath -Path $InputFile -Purpose "package list"
 
 if ($Action -eq "Update") {
     if (-not (Test-IsAdmin)) {
@@ -27,7 +28,7 @@ if ($Action -eq "Update") {
         $safeName = Get-ValidatedPackageId -Id $PackageName -Context "Chocolatey"
         if (-not $safeName) { return }
         Write-Log "Updating package: $safeName..." "INFO"
-        choco upgrade $safeName -y
+        Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("upgrade", $safeName, "-y", "--source", (Get-TrustedChocolateySource))
         if ($LASTEXITCODE -ne 0) {
             Write-Log "Failed to update $safeName (Exit Code: $LASTEXITCODE)." "ERROR"
         }
@@ -35,11 +36,20 @@ if ($Action -eq "Update") {
     else {
         Write-Log "Updating all packages in $InputFile..." "INFO"
         $packages = Get-PackageList -Path $InputFile
+        if ($packages.Count -eq 0) {
+            Write-Log "No packages found in $InputFile to update." "WARN"
+            return
+        }
+        Write-Host "Trusted Chocolatey source: $(Get-TrustedChocolateySource)" -ForegroundColor DarkGray
+        if (-not (Read-Confirmation -Prompt "Upgrade $($packages.Count) package(s) from the approved source? Type y to continue" -ExpectedValue "y")) {
+            Write-Log "Update action cancelled by user." "WARN"
+            return
+        }
         foreach ($p in $packages) {
             $safeName = Get-ValidatedPackageId -Id $p -Context "Chocolatey"
             if (-not $safeName) { continue }
             Write-Log "Upgrading $safeName..." "INFO"
-            choco upgrade $safeName -y
+            Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("upgrade", $safeName, "-y", "--source", (Get-TrustedChocolateySource))
             if ($LASTEXITCODE -ne 0) {
                 Write-Log "Failed to update $safeName (Exit Code: $LASTEXITCODE)." "ERROR"
             }
@@ -56,5 +66,5 @@ elseif ($Action -eq "Info") {
     $safeName = Get-ValidatedPackageId -Id $PackageName -Context "Chocolatey"
     if (-not $safeName) { return }
     Write-Log "Fetching info for $safeName..." "INFO"
-    choco info $safeName
+    Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("info", $safeName, "--source", (Get-TrustedChocolateySource))
 }

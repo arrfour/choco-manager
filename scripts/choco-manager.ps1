@@ -1,6 +1,6 @@
 # Entry script for Choco-Manager
 
-# Load core functions with process-scope policy + unblock
+# Load core functions
 $corePath = Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")) "src\Core\core-functions.ps1"
 if (-not (Test-Path $corePath)) {
     Write-Error "Core functions not found at $corePath"
@@ -8,8 +8,6 @@ if (-not (Test-Path $corePath)) {
 }
 
 try {
-    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-    Unblock-File -Path $corePath -ErrorAction SilentlyContinue
     . $corePath
 } catch {
     Write-Error "Failed to load core functions: $($_.Exception.Message)"

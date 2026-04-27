@@ -12,9 +12,10 @@ param(
 . (Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..\..")) "src\Core\core-functions.ps1")
 
 if (-not $InputFile) {
-    $scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
-    $InputFile = Join-Path (Resolve-Path (Join-Path $scriptRoot "..\..")) "data\choco_packages.txt"
+    $InputFile = Get-DefaultPackageListPath
 }
+
+$InputFile = Resolve-ManagedDataFilePath -Path $InputFile -Purpose "package list"
 
 if (-not (Test-IsAdmin)) {
     Write-Log "Elevation required for $Action. Re-launching..." "WARN"
@@ -32,7 +33,7 @@ if ($Action -eq "Remove") {
     if (-not $safeName) { return }
     
     Write-Log "Uninstalling package: $safeName..." "INFO"
-    choco uninstall $safeName -y
+    Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("uninstall", $safeName, "-y")
     
     if ($LASTEXITCODE -eq 0) {
         Write-Log "Successfully uninstalled $safeName. Updating list..." "SUCCESS"
@@ -48,15 +49,22 @@ elseif ($Action -eq "Sync") {
     Write-Log "Synchronizing local system with $InputFile..." "INFO"
     
     $targetPackages = Get-PackageList -Path $InputFile
-    $installedPackages = choco list --local-only --limit-output | ForEach-Object { $_.Split('|')[0] }
+    $installedPackages = Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("list", "--local-only", "--limit-output") | ForEach-Object { $_.Split('|')[0] }
     
     # 1. Install missing
     $toInstall = $targetPackages | Where-Object { $installedPackages -notcontains $_ }
+    if ($toInstall.Count -gt 0) {
+        Write-Host "Trusted Chocolatey source: $(Get-TrustedChocolateySource)" -ForegroundColor DarkGray
+        if (-not (Read-Confirmation -Prompt "Install $($toInstall.Count) missing package(s) from the approved source? Type y to continue" -ExpectedValue "y")) {
+            Write-Log "Sync install phase cancelled by user." "WARN"
+            $toInstall = @()
+        }
+    }
     foreach ($p in $toInstall) {
         $safeName = Get-ValidatedPackageId -Id $p -Context "Chocolatey"
         if (-not $safeName) { continue }
         Write-Log "Sync: Installing missing package $safeName..." "INFO"
-        choco install $safeName -y
+        Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("install", $safeName, "-y", "--source", (Get-TrustedChocolateySource))
         if ($LASTEXITCODE -ne 0) {
             Write-Log "Sync: Failed to install $safeName (Exit Code: $LASTEXITCODE)." "ERROR"
         }
@@ -70,17 +78,18 @@ elseif ($Action -eq "Sync") {
     
     if ($toRemove) {
         Write-Log "Found orphaned packages: $($toRemove -join ', ')" "WARN"
-        $confirm = Read-Host "Remove these packages to match list? (y/n)"
-        if ($confirm -eq 'y') {
+        if (Read-Confirmation -Prompt "Remove $($toRemove.Count) orphaned package(s) to match the approved list? Type y to continue" -ExpectedValue "y") {
             foreach ($p in $toRemove) {
                 $safeName = Get-ValidatedPackageId -Id $p -Context "Chocolatey"
                 if (-not $safeName) { continue }
                 Write-Log "Sync: Removing orphaned package $safeName..." "INFO"
-                choco uninstall $safeName -y
+                Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("uninstall", $safeName, "-y")
                 if ($LASTEXITCODE -ne 0) {
                     Write-Log "Sync: Failed to uninstall $safeName (Exit Code: $LASTEXITCODE)." "ERROR"
                 }
             }
+        } else {
+            Write-Log "Sync remove phase cancelled by user." "WARN"
         }
     }
     

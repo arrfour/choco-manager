@@ -12,7 +12,7 @@ if (Test-Path $corePath) { . $corePath }
 
 function Show-ChocoLocalPackages {
     Write-Host "`nFetching local Chocolatey packages..." -ForegroundColor Gray
-    $raw = choco list -lo -r
+    $raw = Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("list", "-lo", "-r")
     $packages = @()
     foreach ($line in $raw) {
         if ($line -match '\|') {
@@ -44,7 +44,7 @@ function Show-ChocoLocalPackages {
         $safeId = Get-ValidatedPackageId -Id $pkgId -Context "Chocolatey"
         if ($safeId) {
             Write-Host "`n--- Info for $safeId ---" -ForegroundColor Yellow
-            choco info $safeId
+            Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("info", $safeId, "--source", (Get-TrustedChocolateySource))
             Pause
         }
     }
@@ -52,14 +52,16 @@ function Show-ChocoLocalPackages {
 
 function Show-WingetLocalPackages {
     Write-Host "`nFetching local Winget packages..." -ForegroundColor Gray
-    $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
-    if (-not $wingetCmd) {
+    try {
+        $null = Resolve-TrustedCommandPath -CommandName "winget"
+    }
+    catch {
         Write-Host "Winget not found on this system." -ForegroundColor Yellow
         Pause
         return
     }
 
-    $raw = winget list
+    $raw = Invoke-TrustedExecutable -CommandName "winget" -ArgumentList @("list")
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Winget list failed (Exit Code: $LASTEXITCODE)." -ForegroundColor Yellow
         Pause
@@ -105,7 +107,7 @@ function Show-WingetLocalPackages {
         $safeId = Get-ValidatedPackageId -Id $pkgId -Context "Winget"
         if ($safeId) {
             Write-Host "`n--- Info for $safeId ---" -ForegroundColor Yellow
-            winget show --id $safeId
+            Invoke-TrustedExecutable -CommandName "winget" -ArgumentList @("show", "--id", $safeId, "--exact", "--source", (Get-TrustedWingetSource))
             Pause
         }
     }
@@ -115,7 +117,7 @@ function Show-CombinedLocalPackages {
     Write-Host "`nFetching local packages (Choco + Winget)..." -ForegroundColor Gray
     $items = @()
 
-    $chocoRaw = choco list -lo -r
+    $chocoRaw = Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("list", "-lo", "-r")
     foreach ($line in $chocoRaw) {
         if ($line -match '\|') {
             $parts = $line -split '\|'
@@ -127,9 +129,8 @@ function Show-CombinedLocalPackages {
         }
     }
 
-    $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
-    if ($wingetCmd) {
-        $wingetRaw = winget list
+    try {
+        $wingetRaw = Invoke-TrustedExecutable -CommandName "winget" -ArgumentList @("list")
         if ($LASTEXITCODE -eq 0) {
             foreach ($line in $wingetRaw) {
                 if ($line -match '^\s*Name\s+Id\s+Version') { continue }
@@ -149,6 +150,7 @@ function Show-CombinedLocalPackages {
             }
         }
     }
+    catch { }
 
     if ($items.Count -eq 0) {
         Write-Host "No local packages found." -ForegroundColor Yellow
@@ -176,14 +178,14 @@ function Show-CombinedLocalPackages {
                 $safeId = Get-ValidatedPackageId -Id $item.Id -Context "Winget"
                 if ($safeId) {
                     Write-Host "`n--- Winget Info for $safeId ---" -ForegroundColor Yellow
-                    winget show --id $safeId
+                    Invoke-TrustedExecutable -CommandName "winget" -ArgumentList @("show", "--id", $safeId, "--exact", "--source", (Get-TrustedWingetSource))
                     Pause
                 }
             } else {
                 $safeId = Get-ValidatedPackageId -Id $item.Id -Context "Chocolatey"
                 if ($safeId) {
                     Write-Host "`n--- Chocolatey Info for $safeId ---" -ForegroundColor Yellow
-                    choco info $safeId
+                    Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("info", $safeId, "--source", (Get-TrustedChocolateySource))
                     Pause
                 }
             }
@@ -202,7 +204,7 @@ function Search-Packages {
     
     $results = @()
     if ($Repo -eq "Chocolatey") {
-        $raw = choco search $keyword -r
+        $raw = Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("search", $keyword, "-r", "--source", (Get-TrustedChocolateySource))
         foreach ($line in $raw) {
             if ($line -match '\|') {
                 $parts = $line -split '\|'
@@ -213,10 +215,17 @@ function Search-Packages {
         }
     } else {
         # Winget Search
-        $raw = winget search $keyword
-        winget search $keyword
+        Invoke-TrustedExecutable -CommandName "winget" -ArgumentList @("search", $keyword, "--source", (Get-TrustedWingetSource)) | ForEach-Object {
+            Write-Host $_
+        }
         $id = Read-Host "`nEnter Package ID for more info (or press Enter to skip)"
-        if ($id) { winget show $id; Pause }
+        if ($id) {
+            $safeId = Get-ValidatedPackageId -Id $id -Context "Winget"
+            if ($safeId) {
+                Invoke-TrustedExecutable -CommandName "winget" -ArgumentList @("show", "--id", $safeId, "--exact", "--source", (Get-TrustedWingetSource))
+            }
+            Pause
+        }
         return
     }
     
@@ -241,14 +250,14 @@ function Search-Packages {
         $safePkgId = Get-ValidatedPackageId -Id $pkgId -Context "Chocolatey"
         if (-not $safePkgId) { Pause; return }
         Write-Host "`n--- Info for $pkgId ---" -ForegroundColor Yellow
-        choco info $safePkgId
+        Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("info", $safePkgId, "--source", (Get-TrustedChocolateySource))
         
-        $ins = Read-Host "`nWould you like to install $pkgId? (y/n)"
-        if ($ins -eq 'y') {
+        Write-Host "Trusted Chocolatey source: $(Get-TrustedChocolateySource)" -ForegroundColor DarkGray
+        if (Read-Confirmation -Prompt "`nInstall $pkgId from the approved source? Type y to continue" -ExpectedValue "y") {
             if (-not (Test-IsAdmin)) {
-                Invoke-ElevatedProcess -FilePath "choco" -ArgumentList @("install", $safePkgId, "-y")
+                Invoke-ElevatedProcess -FilePath "choco" -ArgumentList @("install", $safePkgId, "-y", "--source", (Get-TrustedChocolateySource))
             } else {
-                choco install $safePkgId -y
+                Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("install", $safePkgId, "-y", "--source", (Get-TrustedChocolateySource))
             }
         }
         Pause
@@ -304,7 +313,10 @@ do {
         "Package Info (by name)" {
             $pkg = Read-Host "Enter package name"
             $safePkg = Get-ValidatedPackageId -Id $pkg -Context "Chocolatey"
-            if ($safePkg) { choco info $safePkg; Pause }
+            if ($safePkg) {
+                Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("info", $safePkg, "--source", (Get-TrustedChocolateySource))
+                Pause
+            }
         }
         "List Local Packages (Combined)" { Show-CombinedLocalPackages }
         "List Local Packages (Choco)" { Show-ChocoLocalPackages }
@@ -313,12 +325,11 @@ do {
             $pkg = Read-Host "Enter package name to uninstall"
             $safePkg = Get-ValidatedPackageId -Id $pkg -Context "Chocolatey"
             if ($safePkg) {
-                $confirm = Read-Host "Are you sure you want to uninstall $safePkg? (y/n)"
-                if ($confirm -eq 'y') {
+                if (Read-Confirmation -Prompt "Uninstall $safePkg? Type y to continue" -ExpectedValue "y") {
                     if (-not (Test-IsAdmin)) {
                         Invoke-ElevatedProcess -FilePath "choco" -ArgumentList @("uninstall", $safePkg, "-y")
                     } else {
-                        choco uninstall $safePkg -y
+                        Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("uninstall", $safePkg, "-y")
                     }
                 }
             }

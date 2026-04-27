@@ -6,7 +6,256 @@ function Get-ProjectRoot {
     return $root.Path
 }
 
+function Get-DataDirectory {
+    return (Join-Path (Get-ProjectRoot) "data")
+}
+
+function Get-LogDirectory {
+    return (Join-Path (Get-ProjectRoot) "logs")
+}
+
+function Get-DefaultPackageListPath {
+    return (Join-Path (Get-DataDirectory) "choco_packages.txt")
+}
+
+function Get-NormalizedPath {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "Path is required."
+    }
+
+    $expandedPath = [Environment]::ExpandEnvironmentVariables($Path)
+    if (Test-Path $expandedPath) {
+        return (Resolve-Path $expandedPath).Path
+    }
+
+    return [System.IO.Path]::GetFullPath($expandedPath)
+}
+
+function Test-PathUnderDirectory {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path,
+        [Parameter(Mandatory=$true)]
+        [string]$Directory
+    )
+
+    $normalizedPath = Get-NormalizedPath -Path $Path
+    $normalizedDirectory = (Get-NormalizedPath -Path $Directory).TrimEnd('\')
+    $comparison = [System.StringComparison]::OrdinalIgnoreCase
+
+    return $normalizedPath.Equals($normalizedDirectory, $comparison) -or
+        $normalizedPath.StartsWith("$normalizedDirectory\", $comparison)
+}
+
+function Resolve-ManagedDataFilePath {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path,
+        [string]$Purpose = "package list"
+    )
+
+    $resolvedPath = Get-NormalizedPath -Path $Path
+    $dataDirectory = Get-DataDirectory
+    if (-not (Test-PathUnderDirectory -Path $resolvedPath -Directory $dataDirectory)) {
+        throw "$Purpose path must remain under '$dataDirectory'."
+    }
+
+    return $resolvedPath
+}
+
 $LogPath = Join-Path (Get-ProjectRoot) "logs\choco-manager.log"
+
+function Get-LogFileLevels {
+    $configuredLevels = @("WARN", "ERROR")
+    if ($env:CHOCO_MANAGER_LOG_FILE_LEVELS) {
+        $parsedLevels = $env:CHOCO_MANAGER_LOG_FILE_LEVELS.Split(',') | ForEach-Object {
+            $_.Trim().ToUpperInvariant()
+        } | Where-Object { $_ }
+        if ($parsedLevels.Count -gt 0) {
+            $configuredLevels = $parsedLevels
+        }
+    }
+
+    return $configuredLevels
+}
+
+function Test-LogLevelPersistence {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Level
+    )
+
+    return (Get-LogFileLevels) -contains $Level.ToUpperInvariant()
+}
+
+function Get-TrustedPowerShellPath {
+    $candidatePaths = @()
+    if ($env:WINDIR) {
+        if ($env:PROCESSOR_ARCHITEW6432) {
+            $candidatePaths += (Join-Path $env:WINDIR "Sysnative\WindowsPowerShell\v1.0\powershell.exe")
+        }
+        $candidatePaths += (Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe")
+    }
+    $candidatePaths += (Join-Path $PSHOME "powershell.exe")
+
+    foreach ($candidatePath in ($candidatePaths | Where-Object { $_ } | Select-Object -Unique)) {
+        if (Test-Path $candidatePath) {
+            return (Resolve-Path $candidatePath).Path
+        }
+    }
+
+    throw "Unable to locate a trusted Windows PowerShell executable."
+}
+
+function Resolve-TrustedCommandPath {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$CommandName
+    )
+
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($CommandName).ToLowerInvariant()
+    switch ($name) {
+        "powershell" {
+            return (Get-TrustedPowerShellPath)
+        }
+        "choco" {
+            $command = Get-Command choco -CommandType Application -ErrorAction SilentlyContinue
+            if (-not $command) {
+                throw "Chocolatey executable was not found."
+            }
+
+            $commandPath = Get-NormalizedPath -Path $command.Source
+            $allowedRoots = @(
+                $env:ChocolateyInstall,
+                (Join-Path $env:ProgramData "chocolatey"),
+                (Join-Path $env:ProgramFiles "Chocolatey")
+            ) | Where-Object { $_ } | Select-Object -Unique
+
+            foreach ($allowedRoot in $allowedRoots) {
+                if (Test-PathUnderDirectory -Path $commandPath -Directory $allowedRoot) {
+                    return $commandPath
+                }
+            }
+
+            throw "Rejected Chocolatey executable outside trusted directories: $commandPath"
+        }
+        "winget" {
+            $command = Get-Command winget -CommandType Application -ErrorAction SilentlyContinue
+            if (-not $command) {
+                throw "Winget executable was not found."
+            }
+
+            $commandPath = Get-NormalizedPath -Path $command.Source
+            $allowedRoots = @(
+                (Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps"),
+                (Join-Path $env:ProgramFiles "WindowsApps"),
+                (Join-Path $env:SystemRoot "System32")
+            ) | Where-Object { $_ } | Select-Object -Unique
+
+            foreach ($allowedRoot in $allowedRoots) {
+                if (Test-PathUnderDirectory -Path $commandPath -Directory $allowedRoot) {
+                    return $commandPath
+                }
+            }
+
+            throw "Rejected Winget executable outside trusted directories: $commandPath"
+        }
+        default {
+            if (-not [System.IO.Path]::IsPathRooted($CommandName)) {
+                throw "Executable path must be absolute or use a trusted command alias."
+            }
+
+            return (Get-NormalizedPath -Path $CommandName)
+        }
+    }
+}
+
+function Resolve-ProjectScriptPath {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path
+    )
+
+    $scriptPath = Get-NormalizedPath -Path $Path
+    if (-not (Test-Path $scriptPath)) {
+        throw "Script file not found: $scriptPath"
+    }
+
+    if ([System.IO.Path]::GetExtension($scriptPath) -ne ".ps1") {
+        throw "Only PowerShell script paths are allowed: $scriptPath"
+    }
+
+    if (-not (Test-PathUnderDirectory -Path $scriptPath -Directory (Get-ProjectRoot))) {
+        throw "Script path must remain under the project root: $scriptPath"
+    }
+
+    return $scriptPath
+}
+
+function Invoke-ScriptFile {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$FilePath,
+        [string[]]$ArgumentList = @()
+    )
+
+    $trustedPowerShell = Get-TrustedPowerShellPath
+    $resolvedScriptPath = Resolve-ProjectScriptPath -Path $FilePath
+    $processArguments = @("-NoProfile", "-File", $resolvedScriptPath) + $ArgumentList
+
+    Write-Log "Launching script: $resolvedScriptPath" "INFO"
+    Start-Process -FilePath $trustedPowerShell -ArgumentList $processArguments -Wait -NoNewWindow
+}
+
+function Invoke-TrustedExecutable {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$CommandName,
+        [string[]]$ArgumentList = @()
+    )
+
+    $resolvedCommandPath = Resolve-TrustedCommandPath -CommandName $CommandName
+    return & $resolvedCommandPath @ArgumentList
+}
+
+function Get-TrustedChocolateySource {
+    return "https://community.chocolatey.org/api/v2/"
+}
+
+function Get-TrustedWingetSource {
+    return "winget"
+}
+
+function Get-SecureBootstrapDirectory {
+    $baseDirectory = if ($env:LOCALAPPDATA) {
+        Join-Path $env:LOCALAPPDATA "Choco-Manager\bootstrap"
+    }
+    else {
+        Join-Path (Get-ProjectRoot) "logs\bootstrap"
+    }
+
+    if (-not (Test-Path $baseDirectory)) {
+        New-Item -ItemType Directory -Path $baseDirectory -Force | Out-Null
+    }
+
+    return (Get-NormalizedPath -Path $baseDirectory)
+}
+
+function Read-Confirmation {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Prompt,
+        [string]$ExpectedValue = "y"
+    )
+
+    $response = Read-Host $Prompt
+    return $response -ceq $ExpectedValue
+}
 
 function Write-Log {
     param(
@@ -31,15 +280,17 @@ function Write-Log {
     Write-Host $logEntry -ForegroundColor $color
     
     # File Output
-    try {
-        $logDir = Split-Path -Parent $LogPath
-        if (-not (Test-Path $logDir)) {
-            New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+    if (Test-LogLevelPersistence -Level $Level) {
+        try {
+            $logDir = Split-Path -Parent $LogPath
+            if (-not (Test-Path $logDir)) {
+                New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+            }
+            $logEntry | Out-File -FilePath $LogPath -Append -Encoding UTF8
         }
-        $logEntry | Out-File -FilePath $LogPath -Append -Encoding UTF8
-    }
-    catch {
-        Write-Warning "Failed to write to log file: $($_.Exception.Message)"
+        catch {
+            Write-Warning "Failed to write to log file: $($_.Exception.Message)"
+        }
     }
 }
 
@@ -67,7 +318,7 @@ function Show-AuditLog {
     if (Test-Path $logPath) {
         Get-Content $logPath -Tail 20
     } else {
-        Write-Host "No log file found." -ForegroundColor Yellow
+        Write-Host "No persisted log entries found. Adjust CHOCO_MANAGER_LOG_FILE_LEVELS to capture more detail." -ForegroundColor Yellow
     }
 }
 
@@ -78,13 +329,22 @@ function Get-ChocoVersionInfo {
         LatestVersion = $null
     }
 
-    $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
-    if (-not $chocoCmd) { return $info }
+    try {
+        $null = Resolve-TrustedCommandPath -CommandName "choco"
+    }
+    catch {
+        return $info
+    }
 
     $info.IsInstalled = $true
-    try { $info.InstalledVersion = (choco --version 2>$null).Trim() } catch { }
     try {
-        $raw = choco list chocolatey --exact -r 2>$null
+        $info.InstalledVersion = ((Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("--version")) | Select-Object -First 1).Trim()
+    }
+    catch {
+        Write-Log "Unable to determine the installed Chocolatey version: $($_.Exception.Message)" "WARN"
+    }
+    try {
+        $raw = Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("list", "chocolatey", "--exact", "-r", "--source", (Get-TrustedChocolateySource)) 2>$null
         foreach ($line in $raw) {
             if ($line -match '\|') {
                 $parts = $line -split '\|'
@@ -101,16 +361,79 @@ function Get-ChocoVersionInfo {
 
 function Install-Chocolatey {
     Write-Host "This will install Chocolatey from community.chocolatey.org." -ForegroundColor Yellow
-    $confirm = Read-Host "Proceed? (y/n)"
-    if ($confirm -ne 'y') { return }
+    Write-Host "The installer will download the Chocolatey package, display its SHA256 hash, and require explicit confirmation before running the local install script." -ForegroundColor Yellow
+    if (-not (Read-Confirmation -Prompt "Proceed with the secured bootstrap flow? Type y to continue" -ExpectedValue "y")) { return }
 
-    $command = "& {" +
-        " Set-ExecutionPolicy Bypass -Scope Process -Force;" +
-        " [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072;" +
-        " iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))" +
-        " }"
+    $bootstrapDirectory = Get-SecureBootstrapDirectory
+    $bootstrapPath = Join-Path $bootstrapDirectory ("bootstrap-{0}.ps1" -f ([Guid]::NewGuid().ToString("N")))
+    $bootstrapScript = @'
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$PackageUrl,
+    [Parameter(Mandatory=$true)]
+    [string]$SelfPath
+)
 
-    Invoke-ElevatedProcess -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $command)
+$ErrorActionPreference = "Stop"
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
+
+$packageUri = [Uri]$PackageUrl
+if ($packageUri.Scheme -ne "https" -or $packageUri.Host -ne "community.chocolatey.org") {
+    throw "Rejected Chocolatey package URL: $PackageUrl"
+}
+
+$bootstrapRoot = if ($env:LOCALAPPDATA) {
+    Join-Path $env:LOCALAPPDATA "Choco-Manager\bootstrap"
+} else {
+    Join-Path $env:TEMP "Choco-Manager-bootstrap"
+}
+$tempRoot = Join-Path $bootstrapRoot ("install-" + [Guid]::NewGuid().ToString("N"))
+$packagePath = Join-Path $tempRoot "chocolatey.nupkg"
+$extractPath = Join-Path $tempRoot "package"
+
+try {
+    New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+    Invoke-WebRequest -Uri $packageUri.AbsoluteUri -OutFile $packagePath -UseBasicParsing
+    $hash = (Get-FileHash -Path $packagePath -Algorithm SHA256).Hash
+    Write-Host "Downloaded Chocolatey package hash (SHA256): $hash" -ForegroundColor Yellow
+    $approval = Read-Host "Type INSTALL to execute the local Chocolatey package installer"
+    if ($approval -cne "INSTALL") {
+        throw "Chocolatey installation cancelled by user."
+    }
+
+    Expand-Archive -Path $packagePath -DestinationPath $extractPath -Force
+    $installScript = Get-ChildItem -Path $extractPath -Recurse -Filter "chocolateyInstall.ps1" | Select-Object -First 1 -ExpandProperty FullName
+    if (-not $installScript) {
+        throw "Could not locate chocolateyInstall.ps1 inside the Chocolatey package."
+    }
+
+    try {
+        Unblock-File -Path $installScript -ErrorAction Stop
+    }
+    catch {
+        Write-Warning "Unable to remove the downloaded file zone marker from $installScript: $($_.Exception.Message)"
+    }
+    & $installScript
+    if ($LASTEXITCODE -ne 0) {
+        throw "Chocolatey installer exited with code $LASTEXITCODE."
+    }
+}
+finally {
+    Remove-Item -Path $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $SelfPath -Force -ErrorAction SilentlyContinue
+}
+'@
+
+    Set-Content -Path $bootstrapPath -Value $bootstrapScript -Encoding UTF8
+
+    try {
+        $trustedPowerShell = Get-TrustedPowerShellPath
+        Invoke-ElevatedProcess -FilePath $trustedPowerShell -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $bootstrapPath, "-PackageUrl", "https://community.chocolatey.org/api/v2/package/chocolatey", "-SelfPath", $bootstrapPath)
+    }
+    catch {
+        Remove-Item -Path $bootstrapPath -Force -ErrorAction SilentlyContinue
+        throw
+    }
 }
 
 function Test-IsAdmin {
@@ -138,16 +461,18 @@ function Invoke-ElevatedAction {
         [string[]]$ArgumentList = @()
     )
     
-    $args = @("-ExecutionPolicy", "Bypass", "-File", $FilePath) + $ArgumentList
+    $trustedPowerShell = Get-TrustedPowerShellPath
+    $resolvedScriptPath = Resolve-ProjectScriptPath -Path $FilePath
+    $args = @("-NoProfile", "-File", $resolvedScriptPath) + $ArgumentList
 
     if (Test-IsAdmin) {
-        Write-Log "Running as Administrator: $FilePath $($ArgumentList -join ' ')" "INFO"
-        Start-Process -FilePath "powershell.exe" -ArgumentList $args -Wait -NoNewWindow
+        Write-Log "Running as Administrator: $resolvedScriptPath $($ArgumentList -join ' ')" "INFO"
+        Start-Process -FilePath $trustedPowerShell -ArgumentList $args -Wait -NoNewWindow
     }
     else {
-        Write-Log "Requesting Elevation for: $FilePath" "WARN"
+        Write-Log "Requesting Elevation for: $resolvedScriptPath" "WARN"
         try {
-            Start-Process -FilePath "powershell.exe" -ArgumentList $args -Verb RunAs -Wait
+            Start-Process -FilePath $trustedPowerShell -ArgumentList $args -Verb RunAs -Wait
             Write-Log "Elevated process completed." "SUCCESS"
         }
         catch {
@@ -164,14 +489,16 @@ function Invoke-ElevatedProcess {
         [string[]]$ArgumentList = @()
     )
 
+    $resolvedFilePath = Resolve-TrustedCommandPath -CommandName $FilePath
+
     if (Test-IsAdmin) {
-        Write-Log "Running as Administrator: $FilePath $($ArgumentList -join ' ')" "INFO"
-        Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -Wait -NoNewWindow
+        Write-Log "Running as Administrator: $resolvedFilePath $($ArgumentList -join ' ')" "INFO"
+        Start-Process -FilePath $resolvedFilePath -ArgumentList $ArgumentList -Wait -NoNewWindow
     }
     else {
-        Write-Log "Requesting Elevation for: $FilePath" "WARN"
+        Write-Log "Requesting Elevation for: $resolvedFilePath" "WARN"
         try {
-            Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -Verb RunAs -Wait
+            Start-Process -FilePath $resolvedFilePath -ArgumentList $ArgumentList -Verb RunAs -Wait
             Write-Log "Elevated process completed." "SUCCESS"
         }
         catch {

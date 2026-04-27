@@ -11,8 +11,13 @@ param(
 . (Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..\..")) "src\Core\core-functions.ps1")
 
 function Test-Winget {
-    $winget = Get-Command winget -ErrorAction SilentlyContinue
-    return $null -ne $winget
+    try {
+        $null = Resolve-TrustedCommandPath -CommandName "winget"
+        return $true
+    }
+    catch {
+        return $false
+    }
 }
 
 if (-not (Test-Winget)) {
@@ -22,7 +27,7 @@ if (-not (Test-Winget)) {
 
 function Invoke-WingetList {
     Write-Log "Fetching Winget packages..." "INFO"
-    $raw = winget list
+    $raw = Invoke-TrustedExecutable -CommandName "winget" -ArgumentList @("list")
     if ($LASTEXITCODE -ne 0) {
         Write-Log "Winget list failed (Exit Code: $LASTEXITCODE)." "ERROR"
         return
@@ -66,7 +71,7 @@ function Invoke-WingetList {
         $safeId = Get-ValidatedPackageId -Id $pkgId -Context "Winget"
         if ($safeId) {
             Write-Host "`n--- Winget Info for $safeId ---" -ForegroundColor Yellow
-            winget show --id $safeId
+            Invoke-TrustedExecutable -CommandName "winget" -ArgumentList @("show", "--id", $safeId, "--exact", "--source", (Get-TrustedWingetSource))
             Pause
         }
     }
@@ -77,8 +82,15 @@ function Invoke-WingetInstall {
     $safeId = Get-ValidatedPackageId -Id $Id -Context "Winget"
     if (-not $safeId) { return }
 
+    $trustedSource = Get-TrustedWingetSource
+    Write-Host "Trusted Winget source: $trustedSource" -ForegroundColor DarkGray
+    if (-not (Read-Confirmation -Prompt "Install '$safeId' from the approved Winget source '$trustedSource'? Type y to continue" -ExpectedValue "y")) {
+        Write-Log "Winget install cancelled by user." "WARN"
+        return
+    }
+
     Write-Log "Installing '$safeId' via Winget..." "INFO"
-    winget install --id $safeId --silent --accept-package-agreements --accept-source-agreements
+    Invoke-TrustedExecutable -CommandName "winget" -ArgumentList @("install", "--id", $safeId, "--exact", "--source", (Get-TrustedWingetSource), "--silent", "--accept-package-agreements", "--accept-source-agreements")
     if ($LASTEXITCODE -eq 0) {
         Write-Log "Successfully installed $safeId via Winget." "SUCCESS"
     }
@@ -93,7 +105,7 @@ function Invoke-WingetInfo {
     if (-not $safeId) { return }
 
     Write-Log "Fetching Winget info for '$safeId'..." "INFO"
-    winget show --id $safeId
+    Invoke-TrustedExecutable -CommandName "winget" -ArgumentList @("show", "--id", $safeId, "--exact", "--source", (Get-TrustedWingetSource))
     if ($LASTEXITCODE -ne 0) {
         Write-Log "Winget info failed for $safeId (Exit Code: $LASTEXITCODE)." "ERROR"
     }
@@ -104,8 +116,13 @@ function Invoke-WingetRemove {
     $safeId = Get-ValidatedPackageId -Id $Id -Context "Winget"
     if (-not $safeId) { return }
 
+    if (-not (Read-Confirmation -Prompt "Remove '$safeId'? Type y to continue" -ExpectedValue "y")) {
+        Write-Log "Winget remove cancelled by user." "WARN"
+        return
+    }
+
     Write-Log "Uninstalling '$safeId' via Winget..." "INFO"
-    winget uninstall --id $safeId --silent --accept-package-agreements --accept-source-agreements
+    Invoke-TrustedExecutable -CommandName "winget" -ArgumentList @("uninstall", "--id", $safeId, "--exact", "--silent", "--accept-package-agreements", "--accept-source-agreements")
     if ($LASTEXITCODE -eq 0) {
         Write-Log "Successfully uninstalled $safeId via Winget." "SUCCESS"
     }
@@ -125,7 +142,7 @@ function Invoke-WingetSearchInteractive {
     $term = $term.Trim()
 
     Write-Log "Searching Winget for '$term'..." "INFO"
-    $raw = winget search $term
+    $raw = Invoke-TrustedExecutable -CommandName "winget" -ArgumentList @("search", $term, "--source", (Get-TrustedWingetSource))
     if ($LASTEXITCODE -ne 0) {
         Write-Log "Winget search failed (Exit Code: $LASTEXITCODE)." "ERROR"
         return

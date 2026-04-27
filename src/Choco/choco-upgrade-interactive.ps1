@@ -15,7 +15,7 @@ if (-not (Test-IsAdmin)) {
 # 3. Get and Parse Outdated Packages
 Write-Log "Checking for outdated packages (this may take a moment)..." "INFO"
 # -r (or --limit-output) returns: name|current|available|pinned
-$outdatedRaw = choco outdated -r
+$outdatedRaw = Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("outdated", "-r", "--source", (Get-TrustedChocolateySource))
 
 $outdatedPackages = @()
 foreach ($line in $outdatedRaw) {
@@ -64,7 +64,12 @@ if ($selection -match 'q') {
 }
 elseif ($selection -match 'a') {
     Write-Log "Upgrading all outdated packages..." "INFO"
-    choco upgrade all -y
+    Write-Host "Trusted Chocolatey source: $(Get-TrustedChocolateySource)" -ForegroundColor DarkGray
+    if (-not (Read-Confirmation -Prompt "Upgrade all outdated packages from the approved source? Type y to continue" -ExpectedValue "y")) {
+        Write-Log "Upgrade all cancelled by user." "WARN"
+        return
+    }
+    Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("upgrade", "all", "-y", "--source", (Get-TrustedChocolateySource))
 }
 else {
     # Parse comma-separated input
@@ -83,7 +88,7 @@ else {
             $safeName = Get-ValidatedPackageId -Id $pkg -Context "Chocolatey"
             if (-not $safeName) { continue }
             Write-Log "Starting upgrade for $safeName..." "INFO"
-            choco upgrade $safeName -y
+            Invoke-TrustedExecutable -CommandName "choco" -ArgumentList @("upgrade", $safeName, "-y", "--source", (Get-TrustedChocolateySource))
             if ($LASTEXITCODE -eq 0) {
                 Write-Log "Successfully upgraded $safeName" "SUCCESS"
             } else {
